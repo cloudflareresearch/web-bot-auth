@@ -1,12 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { vi, describe, it, expect } from "vitest";
 import {
   generateNonce,
   signatureHeaders,
   validateNonce,
   NONCE_LENGTH_IN_BYTES,
   SIGNATURE_AGENT_HEADER,
+  verify,
 } from "../src/index";
-import { Ed25519Signer } from "../src/crypto";
+import { signerFromJWK, verifierFromJWK } from "../src/crypto";
 import { b64Tou8, u8ToB64 } from "../src/base64";
 
 import vectors from "./test_data/web_bot_auth_architecture_v1.json";
@@ -14,7 +15,7 @@ type Vectors = (typeof vectors)[number];
 
 describe.each(vectors)("Web-bot-auth-ed25519-Vector-%#", (v: Vectors) => {
   it("should pass IETF draft test vectors", async () => {
-    const signer = await Ed25519Signer.fromJWK(v.key);
+    const signer = await signerFromJWK(v.key);
 
     const headers = new Headers();
     if (v.signature_agent) {
@@ -29,7 +30,19 @@ describe.each(vectors)("Web-bot-auth-ed25519-Vector-%#", (v: Vectors) => {
     });
 
     expect(signedHeaders["Signature-Input"]).toBe(v.signature_input);
-    expect(signedHeaders["Signature"]).toBe(v.signature);
+
+    // Appending signed header to the request, given that's what the origin receives
+    headers.append("Signature", signedHeaders["Signature"]);
+    headers.append("Signature-Input", signedHeaders["Signature-Input"]);
+    const signedRequest = new Request(request.url, {
+      headers,
+    });
+
+    vi.setSystemTime(new Date(v.created_ms));
+    expect(
+      await verify(signedRequest, await verifierFromJWK(v.key))
+    ).toBeUndefined();
+    vi.useRealTimers();
   });
 });
 
